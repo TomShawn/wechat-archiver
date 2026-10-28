@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import logging
+import os
 import sqlite3
 import sys
 from logging.handlers import RotatingFileHandler
@@ -57,7 +58,7 @@ def parser():
         group.add_argument("--ocr", dest="ocr", action="store_true", default=None)
         group.add_argument("--no-ocr", dest="ocr", action="store_false")
         item.add_argument("--method", choices=("http", "browser"), default="http")
-        item.add_argument("--output-dir", type=Path, help="本批全部标题.md 的交付目录")
+        item.add_argument("--output-dir", type=Path, help="本批交付目录；不指定时在程序目录上一级创建平级目录")
         item.add_argument("--force", action="store_true", help="重新处理并保留旧版本")
     return command
 
@@ -71,12 +72,28 @@ def read_selected(path):
                 if (row.get("selected") or "").strip().lower() in ("1", "true", "yes", "y")]
 
 
+def resolve_batch_destination(config, requested=None):
+    """Return the explicit user destination, or a timestamped sibling of the project."""
+    if requested is not None:
+        destination = requested.expanduser()
+        if not destination.is_absolute():
+            caller_dir = Path(os.environ.get("WECHAT_ARCHIVER_CALLER_CWD", Path.cwd())).expanduser()
+            destination = caller_dir / destination
+        return destination.resolve()
+
+    from datetime import datetime
+    import uuid
+
+    name = "微信公众号归档-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+    return config.path("batch_output_dir") / name
+
+
 def execute(args, config):
     if args.command == "doctor":
         from .doctor import diagnose
         result = diagnose(config)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        write_json(config.root / "reports" / "doctor.json", result)
+        write_json(config.path("reports_dir") / "doctor.json", result)
         return 0
     ocr_engine = None
     if args.command not in ("status", "search") and (args.ocr if args.ocr is not None else config.ocr):
@@ -154,9 +171,7 @@ def execute(args, config):
             raise ArchiveError("未知命令")
         summary = archiver.run(inputs, force=args.force or args.command == "retry")
         from .batch import export_batch
-        from datetime import datetime
-        import uuid
-        destination = args.output_dir or config.root / "batches" / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+        destination = resolve_batch_destination(config, args.output_dir)
         batch_directory = export_batch(archiver, inputs, destination, summary)
         result = {"finished_at": now(), **summary.to_dict(), **input_info, "batch_directory": batch_directory}
         print(json.dumps(result, ensure_ascii=False, indent=2))

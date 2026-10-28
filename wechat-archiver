@@ -3,6 +3,8 @@
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 task_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Preserve the caller's working directory for relative --output-dir arguments.
+export WECHAT_ARCHIVER_CALLER_CWD="$PWD"
 if [ ! -x "$task_root/.venv/bin/python" ]; then
   echo "请先在项目目录执行 uv sync --extra ocr --system-certs" >&2
   exit 2

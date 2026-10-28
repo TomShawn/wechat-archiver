@@ -23,7 +23,7 @@ uv sync --locked --no-dev --extra ocr --system-certs
 将待归档的公众号文章 URL 按行放入 my-urls.txt，执行：
 
 ~~~bash
-./wechat-archiver archive --input my-urls.txt --method browser --ocr --output-dir batches/我的批次
+./wechat-archiver archive --input my-urls.txt --method browser --ocr
 ~~~
 
 也支持单篇文章或 HTTP 模式：
@@ -31,24 +31,35 @@ uv sync --locked --no-dev --extra ocr --system-certs
 ~~~bash
 ./wechat-archiver archive --url 'https://mp.weixin.qq.com/s/文章标识' --method browser --no-ocr
 ./wechat-archiver archive --input my-urls.txt --method http --no-ocr
+# 也可以明确指定最终交付目录：
+./wechat-archiver archive --input my-urls.txt --method browser --ocr --output-dir "/绝对路径/我的批次"
 ~~~
 
 - --method browser 显式调用本机 agent-browser；--method http 使用普通 HTTP 请求，可能被微信限制。
 - URL 包含 & 时，请使用引号包裹，或直接写入输入文件。
 - 验证码、访问受限页面不会被自动绕过。
 
-输出目录示例：
+### 输出目录与运行数据
+
+- **不指定 --output-dir**：批次交付目录会自动创建在 wechat-archiver/ 的上一级目录，名称类似 微信公众号归档-20261028-163000-a1b2c3/，与程序文件夹平级。
+- **指定 --output-dir**：最终 Markdown、图片、原始文件和批次报告写入指定目录。相对路径按调用程序时所在的目录解析，推荐使用绝对路径。
+- **程序内部状态**：SQLite、归档缓存、日志、搜索结果及诊断报告默认放在项目旁的 wechat-archiver-data/，不会写入源码目录。
+
+默认目录结构如下：
 
 ~~~text
-batches/我的批次/
-├── 文章标题.md
-├── assets/              # 下载图片
-├── originals/           # 原始 HTML 与质量记录
-├── report.json          # 批次结果
-└── reports/index.md     # 批次索引
+GitHub/
+├── wechat-archiver/                 # 程序源码
+├── wechat-archiver-data/            # SQLite、缓存、日志和内部归档数据
+└── 微信公众号归档-20261028-163000-a1b2c3/  # 批次交付文件
+    ├── 文章标题.md
+    ├── assets/
+    ├── originals/
+    ├── report.json
+    └── reports/index.md
 ~~~
 
-不指定 --output-dir 时程序会自行分配批次目录。历史文章索引、SQLite 和断点续传数据保存在本地 data/，缓存归档保存在 output/。
+config.yaml 中的相对路径均相对于配置文件所在目录。需要自定义内部数据位置时，可修改该文件；--output-dir 则只控制本次批次的最终交付目录。
 
 ## 导入本地 HTML 或 Markdown
 

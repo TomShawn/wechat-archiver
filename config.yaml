@@ -1,8 +1,12 @@
 # 所有相对路径均相对于本配置文件所在目录。
-output_dir: output
-database: data/archive.db
-search_results_dir: search_results
-log_dir: logs
+# 运行数据统一保存在项目目录旁的 wechat-archiver-data 中，避免污染源码目录。
+output_dir: ../wechat-archiver-data/output
+database: ../wechat-archiver-data/data/archive.db
+search_results_dir: ../wechat-archiver-data/search_results
+log_dir: ../wechat-archiver-data/logs
+reports_dir: ../wechat-archiver-data/reports
+# 未传 --output-dir 时，批次交付目录直接创建在项目目录的上一级。
+batch_output_dir: ..
 timeout: 20
 request_interval: 2
 retries: 1
@@ -11,4 +15,3 @@ max_image_bytes: 20971520
 ocr: true
 ocr_min_confidence: 0.65
 search_cache_hours: 24
-

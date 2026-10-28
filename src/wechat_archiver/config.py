@@ -9,10 +9,14 @@ from .models import ArchiveError
 @dataclass
 class Config:
     root: Path
+    # Directly constructed Config objects stay rooted locally (useful for isolated tests).
+    # load_config() supplies external runtime defaults for normal CLI execution.
     output_dir: str = "output"
     database: str = "data/archive.db"
     search_results_dir: str = "search_results"
     log_dir: str = "logs"
+    reports_dir: str = "reports"
+    batch_output_dir: str = ".."
     timeout: float = 20
     request_interval: float = 2
     retries: int = 1
@@ -36,8 +40,16 @@ def load_config(path: Path) -> Config:
     allowed = set(Config.__dataclass_fields__) - {"root"}
     if set(values) - allowed:
         raise ArchiveError(f"未知配置项：{', '.join(sorted(set(values) - allowed))}")
-    config = Config(root=path.parent, **values)
-    for key in ("output_dir", "database", "search_results_dir", "log_dir"):
+    runtime_path_defaults = {
+        "output_dir": "../wechat-archiver-data/output",
+        "database": "../wechat-archiver-data/data/archive.db",
+        "search_results_dir": "../wechat-archiver-data/search_results",
+        "log_dir": "../wechat-archiver-data/logs",
+        "reports_dir": "../wechat-archiver-data/reports",
+        "batch_output_dir": "..",
+    }
+    config = Config(root=path.parent, **{**runtime_path_defaults, **values})
+    for key in ("output_dir", "database", "search_results_dir", "log_dir", "reports_dir", "batch_output_dir"):
         if not isinstance(getattr(config, key), str) or not getattr(config, key).strip():
             raise ArchiveError(f"{key} 必须是非空路径字符串")
     for key in ("timeout", "max_html_bytes", "max_image_bytes"):

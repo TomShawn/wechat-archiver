@@ -1,0 +1,14 @@
+# 所有相对路径均相对于本配置文件所在目录。
+output_dir: output
+database: data/archive.db
+search_results_dir: search_results
+log_dir: logs
+timeout: 20
+request_interval: 2
+retries: 1
+max_html_bytes: 15728640
+max_image_bytes: 20971520
+ocr: true
+ocr_min_confidence: 0.65
+search_cache_hours: 24
+

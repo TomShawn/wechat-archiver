@@ -1,0 +1,43 @@
+# Python virtualenvs and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local generated content
+data/
+output/
+batches/
+search_results/
+logs/
+reports/
+tmp_visual_trial/
+tmp_visual_batch_15/
+tmp/
+.staging-*/
+urls.txt
+
+# Build output
+build/
+dist/
+*.whl
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+config.local.yaml
+*.pem
+*.p12
+*.key
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/

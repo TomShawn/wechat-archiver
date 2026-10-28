@@ -1,0 +1,12 @@
+#!/bin/sh
+# Python 3.11/3.12 的 editable .pth 在 C locale 下无法读取中文路径。
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+task_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ ! -x "$task_root/.venv/bin/python" ]; then
+  echo "请先在项目目录执行 uv sync --extra ocr --system-certs" >&2
+  exit 2
+fi
+cd "$task_root" || exit 2
+exec "$task_root/.venv/bin/python" -m wechat_archiver "$@"
+

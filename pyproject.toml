@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wechat-archiver"
+version = "0.1.0"
+description = "本地微信公众号文章归档、候选清单和 Apple Vision OCR"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.28,<0.29", "certifi>=2024.8.30", "beautifulsoup4>=4.12,<5",
+  "lxml>=5,<7", "markdownify>=1.1,<2", "markdown-it-py>=3,<5", "PyYAML>=6,<7", "Pillow>=11,<13",
+]
+
+[project.optional-dependencies]
+ocr = ["pyobjc-framework-Vision>=11,<13; sys_platform == 'darwin'"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+wechat-archiver = "wechat_archiver.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+

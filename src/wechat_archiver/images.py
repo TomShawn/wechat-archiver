@@ -2,6 +2,7 @@ import base64
 import binascii
 import hashlib
 import io
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlsplit
@@ -58,7 +59,8 @@ def needs_download(source: str, local_root: Path | None, cached_images: dict) ->
 
 def process_images(html: str, dest: Path, fetcher, *, base_url: str | None = None,
                    local_root: Path | None = None, offline=False, ocr_engine=None,
-                   cached_images=None, checkpoint_callback=None) -> tuple[str, list[dict]]:
+                   cached_images=None, checkpoint_callback=None,
+                   checkpoint_interval=2.0) -> tuple[str, list[dict]]:
     soup = BeautifulSoup(html, "lxml")
     dest.mkdir(parents=True, exist_ok=True)
     cached_images = cached_images or {}
@@ -76,14 +78,16 @@ def process_images(html: str, dest: Path, fetcher, *, base_url: str | None = Non
         return _process_nodes(soup, nodes, downloads, dest, fetcher, base_url=base_url,
                               local_root=local_root, offline=offline,
                               ocr_engine=ocr_engine, cached_images=cached_images,
-                              checkpoint_callback=checkpoint_callback)
+                              checkpoint_callback=checkpoint_callback, checkpoint_interval=checkpoint_interval)
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _process_nodes(soup, nodes, downloads, dest, fetcher, *, base_url, local_root, offline, ocr_engine,
-                   cached_images, checkpoint_callback):
+                   cached_images, checkpoint_callback, checkpoint_interval):
     by_source, by_content, records = {}, {}, []
+    # 只为新下载或新 OCR 的结果写检查点，且限制写入频率；调用方在结束时写最终清单。
+    unsaved, last_checkpoint = False, time.monotonic()
     for number, node in enumerate(nodes, 1):
         source = image_source(node)
         record = {"position": number, "source": source, "path": None, "status": "failed", "error": None,
@@ -168,7 +172,10 @@ def _process_nodes(soup, nodes, downloads, dest, fetcher, *, base_url, local_roo
             note.string = f"[图片 {number} 保存失败：{record['error']}；原地址见 quality.json]"
             node.replace_with(note)
         records.append(record)
-        if checkpoint_callback: checkpoint_callback(records)
+        unsaved = unsaved or record["downloaded"] or record["ocr_executed"]
+        if checkpoint_callback and unsaved and time.monotonic() - last_checkpoint >= checkpoint_interval:
+            checkpoint_callback(records)
+            unsaved, last_checkpoint = False, time.monotonic()
     return str(soup), records
 
 

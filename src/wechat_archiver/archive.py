@@ -15,7 +15,8 @@ from .markdown import convert_html, render_document
 from .models import ArchiveError, Summary, now
 from .parser import parse_article
 from .quality import archive_is_intact, check_content
-from .storage import atomic_write, archive_lock, commit_directory, digest, directory_name, remove_staging, write_json
+from .storage import (atomic_write, archive_lock, commit_directory, digest, directory_name, link_or_copy,
+                      remove_staging, write_json)
 from .urls import article_id, validate_url
 
 logger = logging.getLogger(__name__)
@@ -146,9 +147,11 @@ class Archiver:
                     checkpoint_callback=lambda records: write_json(cache_manifest, records),
                 )
                 write_json(cache_manifest, images)
-                import shutil
-                if (checkpoint / "assets").exists():
-                    shutil.copytree(checkpoint / "assets", staging / "assets", dirs_exist_ok=True)
+                # 只带入本文引用的图片；检查点里旧版本留下的图片不进入交付目录。
+                for record in images:
+                    if record["path"] and not (staging / record["path"]).exists():
+                        (staging / record["path"]).parent.mkdir(parents=True, exist_ok=True)
+                        link_or_copy(checkpoint / record["path"], staging / record["path"])
                 body = convert_html(html, source_url)
                 original_name = "original.md" if kind == "markdown" else "original.html"
                 (staging / original_name).write_bytes(raw)

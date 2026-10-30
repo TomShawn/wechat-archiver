@@ -36,6 +36,14 @@ def write_json(path: Path, value):
     atomic_write(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
+def link_or_copy(source, target):
+    # 归档图片按内容命名且写入后不再修改，可安全共享同一份数据；跨文件系统时退回复制。
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
 def commit_directory(staging: Path, target: Path):
     # 每次处理创建独立版本；旧版本保持可读，SQLite 最后切换到新目录。
     # 避免覆盖非空目录造成崩溃时旧文件丢失。

@@ -103,3 +103,60 @@ def test_first_failure_is_recorded_as_failed(config, tmp_path):
     page.write_text("<html><body>不是文章</body></html>", "utf-8")
     run(config, {"path": str(page)})
     assert status_of(config, page)["status"] == "failed"
+
+
+def delivered(config):
+    [target] = [path for path in config.path("output_dir").iterdir() if not path.name.startswith(".")]
+    return target
+
+
+def test_delivered_images_are_hardlinked_to_checkpoint(config, tmp_path):
+    run(config, {"path": str(write_page(tmp_path / "src"))})
+    [image] = (delivered(config) / "assets").iterdir()
+    assert image.stat().st_nlink >= 2
+
+
+def test_stale_checkpoint_images_not_delivered(config, tmp_path):
+    page = write_page(tmp_path / "src")
+    checkpoints = config.path("database").parent / "checkpoints"
+    run(config, {"path": str(page)})
+    [checkpoint] = checkpoints.iterdir()
+    (checkpoint / "assets" / "stale.png").write_bytes(png((0, 0, 0)))
+    archiver = Archiver(config)
+    try:
+        archiver.run([{"kind": "html", "offline": True, "path": str(page)}], force=True)
+        latest = Path(archiver.database.get(digest(str(page.resolve()).encode()))["local_path"])
+    finally:
+        archiver.close()
+    assert len(list((latest / "assets").iterdir())) == 1
+    assert not (latest / "assets" / "stale.png").exists()
+
+
+def test_link_or_copy_falls_back_to_copy(tmp_path, monkeypatch):
+    from wechat_archiver import storage
+    source = tmp_path / "a.png"
+    source.write_bytes(b"data")
+
+    def cross_device(*args):
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(storage.os, "link", cross_device)
+    storage.link_or_copy(source, tmp_path / "b.png")
+    assert (tmp_path / "b.png").read_bytes() == b"data"
+    assert source.stat().st_nlink == 1
+
+
+def test_batch_export_hardlinks_images(config, tmp_path):
+    from wechat_archiver.batch import export_batch
+    page = write_page(tmp_path / "src")
+    inputs = [{"kind": "html", "offline": True, "path": str(page)}]
+    archiver = Archiver(config)
+    try:
+        summary = archiver.run(inputs)
+        export_batch(archiver, inputs, tmp_path / "batch", summary)
+    finally:
+        archiver.close()
+    [key_dir] = (tmp_path / "batch" / "assets").iterdir()
+    [image] = key_dir.iterdir()
+    assert image.stat().st_nlink >= 3
+    assert f"assets/{key_dir.name}/{image.name}" in next((tmp_path / "batch").glob("*.md")).read_text("utf-8")

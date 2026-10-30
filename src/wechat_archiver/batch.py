@@ -1,7 +1,7 @@
 import json, re, shutil, uuid
 from pathlib import Path
 from urllib.parse import quote
-from .storage import atomic_write, write_json, digest
+from .storage import atomic_write, write_json, digest, link_or_copy
 from .urls import article_id
 from .models import now
 
@@ -27,7 +27,7 @@ def export_batch(archiver, inputs, destination, summary):
             if target.exists(): name=title+'--'+key[:10]+'.md'
             resources=destination/'assets'/key
             resources.mkdir(parents=True,exist_ok=True)
-            if (source/'assets').exists(): shutil.copytree(source/'assets',resources,dirs_exist_ok=True)
+            if (source/'assets').exists(): shutil.copytree(source/'assets',resources,dirs_exist_ok=True,copy_function=link_or_copy)
             text=(source/'index.md').read_text()
             text=text.replace('assets/', 'assets/'+key+'/')
             atomic_write(destination/name,text)

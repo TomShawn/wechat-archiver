@@ -90,8 +90,25 @@ def test_cached_images_are_not_downloaded(config, tmp_path):
     assert records[0]["status"] == "saved" and not records[0]["downloaded"]
 
 
-def test_checkpoint_callback_called_per_image(config, tmp_path):
+def test_checkpoint_written_for_new_downloads(config, tmp_path):
     seen = []
     process_images(article(0, 1, 2), tmp_path / "assets", SlowFetcher(config),
-                   checkpoint_callback=lambda records: seen.append(len(records)))
+                   checkpoint_callback=lambda records: seen.append(len(records)), checkpoint_interval=0)
     assert seen == [1, 2, 3]
+
+
+def test_checkpoint_writes_are_throttled(config, tmp_path):
+    seen = []
+    process_images(article(0, 1, 2), tmp_path / "assets", SlowFetcher(config),
+                   checkpoint_callback=lambda records: seen.append(len(records)), checkpoint_interval=60)
+    assert seen == []
+
+
+def test_no_checkpoint_when_nothing_new(config, tmp_path):
+    cached = tmp_path / "cached.png"
+    cached.write_bytes(png(COLORS[0]))
+    seen = []
+    process_images(article(0), tmp_path / "assets", SlowFetcher(config),
+                   cached_images={"https://mmbiz.qpic.cn/0.png": {"file": cached}},
+                   checkpoint_callback=lambda records: seen.append(len(records)), checkpoint_interval=0)
+    assert seen == []

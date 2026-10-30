@@ -78,7 +78,7 @@ config.yaml 中的相对路径均相对于配置文件所在目录。需要自�
 ./wechat-archiver doctor
 ~~~
 
-默认配置文件为 config.yaml，含 SQLite 位置、输出目录、图片大小上限、请求间隔和本地 OCR 设置。
+默认配置文件为 config.yaml，含 SQLite 位置、输出目录、图片大小上限、请求间隔和本地 OCR 设置。文章页面按 request_interval 串行请求；图片按 image_request_interval 限速，并以 image_workers 个线程并发下载。单张图片返回 403 只记为该图片失败，同一图片主机连续 3 次 429 才停止本批次对它的请求。
 
 ## 已知边界
 
@@ -95,4 +95,4 @@ config.yaml 中的相对路径均相对于配置文件所在目录。需要自�
 - parser.py、images.py、ocr.py、markdown.py：正文、图片、OCR、Markdown 转换。
 - quality.py、database.py、storage.py：质量检查、SQLite 和文件持久化。
 
-此 Git 仓库仅保存运行所需的源码、启动脚本、依赖锁文件和默认配置。历史归档文件、图片、数据库、日志、测试报告、测试样本及测试脚本没有迁入。运行时生成的内容均被 .gitignore 排除，避免意外提交真实归档资料。
+此 Git 仓库保存运行所需的源码、启动脚本、依赖锁文件、默认配置和 tests/ 下的单元测试（执行 uv sync 后运行 .venv/bin/python -m pytest）。历史归档文件、图片、数据库、日志和测试报告没有迁入。运行时生成的内容均被 .gitignore 排除，避免意外提交真实归档资料。

@@ -9,6 +9,9 @@ reports_dir: ../wechat-archiver-data/reports
 batch_output_dir: ..
 timeout: 20
 request_interval: 2
+# 图片 CDN 单独限速，并发下载；文章页面仍按 request_interval 串行请求。
+image_request_interval: 0.3
+image_workers: 4
 retries: 1
 max_html_bytes: 15728640
 max_image_bytes: 20971520

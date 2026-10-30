@@ -19,6 +19,8 @@ class Config:
     batch_output_dir: str = ".."
     timeout: float = 20
     request_interval: float = 2
+    image_request_interval: float = 0.3
+    image_workers: int = 4
     retries: int = 1
     max_html_bytes: int = 15 * 1024 * 1024
     max_image_bytes: int = 20 * 1024 * 1024
@@ -59,6 +61,10 @@ def load_config(path: Path) -> Config:
         raise ArchiveError("request_interval 和 retries 必须是数字")
     if config.request_interval < 0 or not 0 <= config.retries <= 3:
         raise ArchiveError("请求间隔不得为负数，retries 必须在 0～3 之间")
+    if not isinstance(config.image_request_interval, (int, float)) or config.image_request_interval < 0:
+        raise ArchiveError("image_request_interval 必须是非负数字")
+    if not isinstance(config.image_workers, int) or not 1 <= config.image_workers <= 8:
+        raise ArchiveError("image_workers 必须是 1～8 之间的整数")
     if not isinstance(config.ocr, bool):
         raise ArchiveError("ocr 必须是 true 或 false")
     if not isinstance(config.ocr_min_confidence, (int, float)) or not 0 <= config.ocr_min_confidence <= 1:

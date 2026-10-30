@@ -1,5 +1,6 @@
 import logging
 import ssl
+import threading
 import time
 from urllib.parse import urljoin, urlsplit
 
@@ -12,12 +13,18 @@ from .urls import validate_url
 
 logger = logging.getLogger(__name__)
 
+# 单张图片被拒绝不代表整站拦截；同一图片主机连续限流达到此次数才停止本批请求。
+IMAGE_THROTTLE_LIMIT = 3
+
 
 class Fetcher:
     def __init__(self, config: Config, transport=None):
         self.config = config
         self.blocked: set[str] = set()
         self.last_request: dict[str, float] = {}
+        self.image_throttled: dict[str, int] = {}
+        # 图片并发下载时共享限速状态。
+        self.lock = threading.Lock()
         self.client = httpx.Client(
             verify=ssl.create_default_context(cafile=certifi.where()),
             timeout=config.timeout, follow_redirects=False, transport=transport,
@@ -30,24 +37,43 @@ class Fetcher:
 
     def block(self, url: str, reason: str):
         host = urlsplit(url).hostname or ""
-        self.blocked.add(host)
+        with self.lock:
+            self.blocked.add(host)
         raise AccessBlocked(f"{host}：{reason}；已停止当前批次对该主机的请求，请在浏览器查看并手动保存 HTML")
+
+    def wait_turn(self, host: str, interval: float):
+        with self.lock:
+            current = time.monotonic()
+            slot = max(current, self.last_request.get(host, 0) + interval)
+            self.last_request[host] = slot
+        if slot > current:
+            time.sleep(slot - current)
+
+    def reject_image(self, url: str, status: int):
+        host = urlsplit(url).hostname or ""
+        if status == 429:
+            with self.lock:
+                self.image_throttled[host] = self.image_throttled.get(host, 0) + 1
+                count = self.image_throttled[host]
+            if count >= IMAGE_THROTTLE_LIMIT:
+                self.block(url, f"图片请求连续 {count} 次 HTTP 429")
+        raise ArchiveError(f"图片请求被拒绝：HTTP {status}")
 
     def get(self, url: str, *, image=False, article=False, allow_private=False) -> tuple[bytes, str, str]:
         url = validate_url(url, article=article, allow_private=allow_private)
         limit = self.config.max_image_bytes if image else self.config.max_html_bytes
+        interval = self.config.image_request_interval if image else self.config.request_interval
         for redirect in range(6):
             host = urlsplit(url).hostname or ""
             if host in self.blocked:
                 raise AccessBlocked(f"{host} 已在当前批次停止请求；请手动保存 HTML 后导入")
             for attempt in range(self.config.retries + 1):
-                delay = self.config.request_interval - (time.monotonic() - self.last_request.get(host, 0))
-                if delay > 0:
-                    time.sleep(delay)
-                self.last_request[host] = time.monotonic()
+                self.wait_turn(host, interval)
                 try:
                     with self.client.stream("GET", url) as response:
                         if response.status_code in (401, 403, 429):
+                            if image:
+                                self.reject_image(url, response.status_code)
                             self.block(url, f"HTTP {response.status_code}")
                         if 300 <= response.status_code < 400:
                             location = response.headers.get("location")
@@ -73,7 +99,10 @@ class Fetcher:
                             chunks.append(chunk)
                         body = b"".join(chunks)
                         mime = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                        if not image:
+                        if image:
+                            with self.lock:
+                                self.image_throttled.pop(host, None)
+                        else:
                             text = body.decode("utf-8", "replace")
                             # 正常文章可能在正文里讨论验证码，只有缺少正文容器时才检查拦截提示。
                             if 'id="js_content"' not in text and "id='js_content'" not in text:

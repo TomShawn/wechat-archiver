@@ -2,6 +2,7 @@ import base64
 import binascii
 import hashlib
 import io
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlsplit
 
@@ -41,14 +42,50 @@ def local_resource(source: str, root: Path) -> Path:
     return candidate
 
 
+def image_source(node) -> str:
+    return node.get("data-src") or node.get("data-original") or node.get("src") or ""
+
+
+def needs_download(source: str, local_root: Path | None, cached_images: dict) -> bool:
+    if not source or source.startswith("data:") or source in cached_images:
+        return False
+    try:
+        parts = urlsplit(source)
+    except ValueError:
+        return False
+    return not (parts.scheme == "file" or (local_root and not parts.scheme and not parts.netloc))
+
+
 def process_images(html: str, dest: Path, fetcher, *, base_url: str | None = None,
                    local_root: Path | None = None, offline=False, ocr_engine=None,
                    cached_images=None, checkpoint_callback=None) -> tuple[str, list[dict]]:
     soup = BeautifulSoup(html, "lxml")
     dest.mkdir(parents=True, exist_ok=True)
+    cached_images = cached_images or {}
+    nodes = soup.find_all("img")
+    # 远程图片提前并发下载；写盘、OCR 和检查点仍按文章顺序逐张进行。
+    downloads = {}
+    executor = ThreadPoolExecutor(max_workers=getattr(fetcher.config, "image_workers", 1))
+    try:
+        if not offline:
+            for node in nodes:
+                source = image_source(node)
+                if source not in downloads and needs_download(source, local_root, cached_images):
+                    resolved = urljoin(base_url or "https://mp.weixin.qq.com/", source)
+                    downloads[source] = executor.submit(fetcher.get, resolved, image=True)
+        return _process_nodes(soup, nodes, downloads, dest, fetcher, base_url=base_url,
+                              local_root=local_root, offline=offline,
+                              ocr_engine=ocr_engine, cached_images=cached_images,
+                              checkpoint_callback=checkpoint_callback)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _process_nodes(soup, nodes, downloads, dest, fetcher, *, base_url, local_root, offline, ocr_engine,
+                   cached_images, checkpoint_callback):
     by_source, by_content, records = {}, {}, []
-    for number, node in enumerate(soup.find_all("img"), 1):
-        source = node.get("data-src") or node.get("data-original") or node.get("src") or ""
+    for number, node in enumerate(nodes, 1):
+        source = image_source(node)
         record = {"position": number, "source": source, "path": None, "status": "failed", "error": None,
                   "ocr": None, "new_file": False, "downloaded": False, "ocr_executed": False}
         if source in by_source:
@@ -71,14 +108,15 @@ def process_images(html: str, dest: Path, fetcher, *, base_url: str | None = Non
                     if path.stat().st_size > fetcher.config.max_image_bytes:
                         raise ArchiveError("本地图片超过大小限制")
                     data = path.read_bytes()
-                elif source in (cached_images or {}):
+                elif source in cached_images:
                     cached_path = cached_images[source]["file"]
                     data = cached_path.read_bytes()
                 else:
                     if offline:
                         raise ArchiveError("离线导入未下载远程图片；去掉 --offline 可补充下载")
-                    resolved = urljoin(base_url or "https://mp.weixin.qq.com/", source)
-                    data, _, _ = fetcher.get(resolved, image=True)
+                    future = downloads.get(source)
+                    data, _, _ = future.result() if future else fetcher.get(
+                        urljoin(base_url or "https://mp.weixin.qq.com/", source), image=True)
                     record["downloaded"] = True
                 extension, width, height = inspect_image(data)
                 name = f"{hashlib.sha256(data).hexdigest()}.{extension}"
@@ -93,7 +131,7 @@ def process_images(html: str, dest: Path, fetcher, *, base_url: str | None = Non
                     for hint in ("emoji", "icon", "logo", "二维码", "装饰")
                 )
                 if ocr_engine and not decorative:
-                    cached_ocr = by_content.get(name) or (cached_images or {}).get(source, {}).get("ocr")
+                    cached_ocr = by_content.get(name) or cached_images.get(source, {}).get("ocr")
                     if cached_ocr and cached_ocr.get("status") == "ok":
                         record["ocr"] = cached_ocr
                         record["ocr_reused"] = True

@@ -59,7 +59,9 @@ def parser():
         group.add_argument("--no-ocr", dest="ocr", action="store_false")
         item.add_argument("--method", choices=("http", "browser"), default="http")
         item.add_argument("--output-dir", type=Path, help="本批交付目录；不指定时在程序目录上一级创建平级目录")
-        item.add_argument("--force", action="store_true", help="重新处理并保留旧版本")
+        item.add_argument("--force", action="store_true", help="重新处理并保留旧版本；复用已抓取的页面")
+    for item in (archive, retry):
+        item.add_argument("--refetch", action="store_true", help="重新抓取文章页面（隐含 --force）")
     return command
 
 
@@ -169,7 +171,8 @@ def execute(args, config):
             inputs = [json.loads(row["input_json"]) for row in archiver.database.rows(failed_only=True)]
         else:
             raise ArchiveError("未知命令")
-        summary = archiver.run(inputs, force=args.force or args.command == "retry")
+        summary = archiver.run(inputs, force=args.force or args.command == "retry",
+                               refetch=getattr(args, "refetch", False))
         from .batch import export_batch
         destination = resolve_batch_destination(config, args.output_dir)
         batch_directory = export_batch(archiver, inputs, destination, summary)

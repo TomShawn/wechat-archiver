@@ -78,6 +78,10 @@ config.yaml 中的相对路径均相对于配置文件所在目录。需要自�
 ./wechat-archiver doctor
 ~~~
 
+- --force 重新处理已归档的文章并保留旧版本，复用已缓存的文章页面，不再请求微信。
+- --refetch（archive、retry 可用）重新抓取文章页面后再处理，隐含 --force；抓取结果无效时保留原缓存和原归档。
+- 重新处理失败时，已有成功、重复或部分完成交付的记录保持原状态，只记录本次错误。
+
 默认配置文件为 config.yaml，含 SQLite 位置、输出目录、图片大小上限、请求间隔和本地 OCR 设置。文章页面按 request_interval 串行请求；图片按 image_request_interval 限速，并以 image_workers 个线程并发下载。单张图片返回 403 只记为该图片失败，同一图片主机连续 3 次 429 才停止本批次对它的请求。
 
 ## 已知边界

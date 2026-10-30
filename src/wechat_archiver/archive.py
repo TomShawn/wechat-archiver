@@ -34,12 +34,13 @@ class Archiver:
         if self.browser: self.browser.close()
         self.database.close()
 
-    def run(self, inputs: list[dict], *, force=False) -> Summary:
+    def run(self, inputs: list[dict], *, force=False, refetch=False) -> Summary:
         with archive_lock(self.config.path("database")):
             self.database.recover_running()
-            return self._run(inputs, force=force)
+            # 重新抓取必然需要重新处理。
+            return self._run(inputs, force=force or refetch, refetch=refetch)
 
-    def _run(self, inputs: list[dict], *, force=False) -> Summary:
+    def _run(self, inputs: list[dict], *, force=False, refetch=False) -> Summary:
         summary = Summary(selected=len(inputs))
         for spec in inputs:
             key = None
@@ -71,7 +72,8 @@ class Archiver:
                     checkpoint = self.config.path("database").parent / "checkpoints" / key
                     checkpoint.mkdir(parents=True, exist_ok=True)
                     cached_html = checkpoint / "source.html"
-                    if cached_html.exists():
+                    # --force 复用已抓取的页面，只有 --refetch 才重新请求微信。
+                    if cached_html.exists() and not refetch:
                         raw, mime = cached_html.read_bytes(), "text/html"
                     else:
                         raw, mime, source_url = (self.browser or self.fetcher).get(source_url, article=True)
@@ -83,18 +85,6 @@ class Archiver:
                     if path.stat().st_size > self.config.max_html_bytes:
                         raise ArchiveError("导入文件超过 HTML 大小限制")
                     raw = path.read_bytes()
-                duplicate = self.database.find_content(digest(raw), key) if not force else None
-                if duplicate and archive_is_intact(duplicate):
-                    self.database.save(key, {"source_url": source_url, "status": "duplicate",
-                                             "title": duplicate["title"], "account": duplicate["account"],
-                                             "published_at": duplicate["published_at"],
-                                             "content_hash": digest(raw), "local_path": duplicate["local_path"],
-                                             "error": None, "input_json": input_json})
-                    self.database.connection.execute("CREATE TABLE IF NOT EXISTS url_aliases(url TEXT PRIMARY KEY, article_id TEXT)")
-                    self.database.connection.execute("INSERT OR REPLACE INTO url_aliases VALUES (?,?)", (source_url or str(path), duplicate["id"]))
-                    self.database.connection.commit()
-                    summary.skipped += 1
-                    continue
                 if kind == "markdown":
                     article = self._import_markdown(raw, path, source_url)
                     source_url = article.source_url
@@ -116,20 +106,18 @@ class Archiver:
                     if match_field: identity_fields[field] = match_field.group(1)
                 if len(identity_fields) == 3:
                     identity = "wechat:" + digest("|".join(identity_fields[field] for field in ("biz", "mid", "idx")).encode())
-                self.database.connection.execute("CREATE TABLE IF NOT EXISTS identities(identity TEXT PRIMARY KEY, article_id TEXT)")
-                self.database.connection.execute("CREATE TABLE IF NOT EXISTS url_aliases(url TEXT PRIMARY KEY, article_id TEXT)")
-                match = self.database.connection.execute("SELECT article_id FROM identities WHERE identity=?", (identity,)).fetchone()
-                if match and match[0] != key:
-                    existing = self.database.get(match[0])
-                    if existing and archive_is_intact(existing) and not force:
-                        self.database.save(key, {**existing, "status":"duplicate", "source_url":source_url, "input_json":input_json})
-                        self.database.connection.execute("INSERT OR REPLACE INTO url_aliases VALUES (?,?)", (source_url or str(path),match[0]))
-                        self.database.connection.commit()
-                        summary.skipped += 1
-                        continue
-                self.database.connection.execute("INSERT OR REPLACE INTO identities VALUES (?,?)", (identity,key))
-                self.database.connection.execute("INSERT OR REPLACE INTO url_aliases VALUES (?,?)", (source_url or str(path),key))
-                self.database.connection.commit()
+                alias = source_url or str(path)
+                existing = self.database.find_identity(identity, exclude=key)
+                if existing and archive_is_intact(existing) and not force:
+                    # 只引用已有归档的交付路径和元数据，发现时间等保留本记录自己的值。
+                    self.database.save(key, {"source_url": source_url, "status": "duplicate",
+                                             **{name: existing[name] for name in (
+                                                 "title", "account", "published_at", "local_path", "archived_at")},
+                                             "content_hash": digest(raw), "error": None, "input_json": input_json})
+                    self.database.add_alias(alias, existing["id"])
+                    summary.skipped += 1
+                    continue
+                self.database.claim_identity(identity, key, alias)
                 checkpoint = self.config.path("database").parent / "checkpoints" / key
                 checkpoint.mkdir(parents=True, exist_ok=True)
                 atomic_write(checkpoint / ("source.md" if kind == "markdown" else "source.html"), raw)
@@ -239,10 +227,11 @@ class Archiver:
                 summary.errors.append({"input": spec.get("url") or spec.get("path"), "reason": str(exc),
                                        "suggestion": "在浏览器检查文章并保存 HTML 与资源文件夹，再使用 import --html"})
                 if key:
-                    # 强制重处理失败时保留原有成功版本与索引，不用失败状态覆盖成功记录。
                     values = {"status": "failed", "error": str(exc), "input_json": json.dumps(spec, ensure_ascii=False)}
-                    if previous and previous["status"] == "success":
-                        values["status"] = "success"
+                    # 已有可用交付的记录（成功、重复引用或部分完成）不因重处理失败降级为 failed。
+                    if previous and previous["status"] in ("success", "duplicate", "partial") \
+                            and previous.get("local_path"):
+                        values["status"] = previous["status"]
                     self.database.save(key, values)
                 logger.warning("archive failed id=%s reason=%s", key, exc)
             except KeyboardInterrupt:

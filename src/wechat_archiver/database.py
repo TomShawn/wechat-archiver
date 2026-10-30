@@ -29,6 +29,8 @@ class Database:
         CREATE TABLE IF NOT EXISTS candidates (
           id TEXT PRIMARY KEY, first_discovered_at TEXT NOT NULL, payload TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS identities(identity TEXT PRIMARY KEY, article_id TEXT);
+        CREATE TABLE IF NOT EXISTS url_aliases(url TEXT PRIMARY KEY, article_id TEXT);
         """)
         self.connection.commit()
 
@@ -36,12 +38,21 @@ class Database:
         row = self.connection.execute("SELECT * FROM articles WHERE id=?", (key,)).fetchone()
         return dict(row) if row else None
 
-    def find_content(self, content_hash, exclude):
+    def find_identity(self, identity, exclude):
         row = self.connection.execute(
-            "SELECT * FROM articles WHERE content_hash=? AND status='success' AND id<>? LIMIT 1",
-            (content_hash, exclude),
+            "SELECT articles.* FROM identities JOIN articles ON articles.id = identities.article_id "
+            "WHERE identities.identity=? AND articles.id<>?", (identity, exclude),
         ).fetchone()
         return dict(row) if row else None
+
+    def add_alias(self, url, article_id):
+        with self.connection:
+            self.connection.execute("INSERT OR REPLACE INTO url_aliases VALUES (?,?)", (url, article_id))
+
+    def claim_identity(self, identity, article_id, url):
+        with self.connection:
+            self.connection.execute("INSERT OR REPLACE INTO identities VALUES (?,?)", (identity, article_id))
+            self.connection.execute("INSERT OR REPLACE INTO url_aliases VALUES (?,?)", (url, article_id))
 
     def save(self, key: str, values: dict):
         current = self.get(key) or {"first_discovered_at": now()}

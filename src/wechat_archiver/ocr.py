@@ -41,7 +41,8 @@ class VisionOCR:
             return {"status": "ok", "text": text, **summarize_confidence(lines, self.min_confidence),
                     "lines": lines, "passes": passes,
                     "layout": "estimated_from_bounding_boxes; indentation_requires_review"}
-        except Exception as exc:
+        # Vision/PyObjC 可能抛出任意类型的异常；单张图片 OCR 失败只记入该图片，不能中断整篇归档。
+        except Exception as exc:  # noqa: BLE001
             return {"status": "error", "text": "", "error": f"{type(exc).__name__}: {exc}"}
 
     def recognize_lines(self, path: Path, languages) -> list[dict]:

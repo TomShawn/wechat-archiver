@@ -83,8 +83,8 @@ def resolve_batch_destination(config, requested=None):
             destination = caller_dir / destination
         return destination.resolve()
 
-    from datetime import datetime
     import uuid
+    from datetime import datetime
 
     name = "微信公众号归档-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     return config.path("batch_output_dir") / name

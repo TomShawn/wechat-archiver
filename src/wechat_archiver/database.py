@@ -2,7 +2,35 @@ import json
 import sqlite3
 from pathlib import Path
 
-from .models import now
+from .models import ArchiveError, now
+
+# 按顺序执行的 schema 迁移；PRAGMA user_version 记录已执行到第几条。只能追加，不能修改已发布的条目。
+# 第 1 条与引入版本号前的建表语句一致（均为 IF NOT EXISTS），旧数据库从版本 0 升级时不受影响。
+MIGRATIONS = [
+    """
+    CREATE TABLE IF NOT EXISTS articles (
+      id TEXT PRIMARY KEY, source_url TEXT, title TEXT, account TEXT, published_at TEXT,
+      local_path TEXT, first_discovered_at TEXT NOT NULL, last_checked_at TEXT NOT NULL,
+      archived_at TEXT, status TEXT NOT NULL, content_hash TEXT, error TEXT,
+      input_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS article_content_hash ON articles(content_hash);
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY, article_id TEXT, created_at TEXT NOT NULL,
+      status TEXT NOT NULL, detail TEXT
+    );
+    CREATE TABLE IF NOT EXISTS cache (
+      key TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS candidates (
+      id TEXT PRIMARY KEY, first_discovered_at TEXT NOT NULL, payload TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS identities(identity TEXT PRIMARY KEY, article_id TEXT);
+    CREATE TABLE IF NOT EXISTS url_aliases(url TEXT PRIMARY KEY, article_id TEXT);
+    """,
+    # retry --failed 和 status 按状态筛选。
+    "CREATE INDEX IF NOT EXISTS article_status ON articles(status);",
+]
 
 
 class Database:
@@ -11,28 +39,21 @@ class Database:
         self.connection = sqlite3.connect(path)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA journal_mode=WAL")
-        self.connection.executescript("""
-        CREATE TABLE IF NOT EXISTS articles (
-          id TEXT PRIMARY KEY, source_url TEXT, title TEXT, account TEXT, published_at TEXT,
-          local_path TEXT, first_discovered_at TEXT NOT NULL, last_checked_at TEXT NOT NULL,
-          archived_at TEXT, status TEXT NOT NULL, content_hash TEXT, error TEXT,
-          input_json TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS article_content_hash ON articles(content_hash);
-        CREATE TABLE IF NOT EXISTS events (
-          id INTEGER PRIMARY KEY, article_id TEXT, created_at TEXT NOT NULL,
-          status TEXT NOT NULL, detail TEXT
-        );
-        CREATE TABLE IF NOT EXISTS cache (
-          key TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS candidates (
-          id TEXT PRIMARY KEY, first_discovered_at TEXT NOT NULL, payload TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS identities(identity TEXT PRIMARY KEY, article_id TEXT);
-        CREATE TABLE IF NOT EXISTS url_aliases(url TEXT PRIMARY KEY, article_id TEXT);
-        """)
-        self.connection.commit()
+        self.migrate()
+
+    def migrate(self):
+        version = self.connection.execute("PRAGMA user_version").fetchone()[0]
+        if version > len(MIGRATIONS):
+            self.connection.close()
+            raise ArchiveError(f"数据库 schema 版本 {version} 高于本程序支持的 {len(MIGRATIONS)}，请升级 wechat-archiver")
+        for number, script in enumerate(MIGRATIONS[version:], version + 1):
+            # 每条迁移与版本号在同一事务中提交，失败时整体回滚，不会停在半升级状态。
+            try:
+                self.connection.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {number};\nCOMMIT;")
+            except sqlite3.Error:
+                if self.connection.in_transaction:
+                    self.connection.rollback()
+                raise
 
     def get(self, key):
         row = self.connection.execute("SELECT * FROM articles WHERE id=?", (key,)).fetchone()

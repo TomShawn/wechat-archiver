@@ -105,12 +105,11 @@ class Fetcher:
                         else:
                             text = body.decode("utf-8", "replace")
                             # 正常文章可能在正文里讨论验证码，只有缺少正文容器时才检查拦截提示。
-                            if 'id="js_content"' not in text and "id='js_content'" not in text:
-                                if any(s in text.lower() for s in (
-                                    "site unavailable", "antispider", "访问过于频繁", "环境异常",
-                                    "访问受限", "完成验证", "验证码", "verifycaptcha",
-                                )):
-                                    self.block(url, "响应为访问限制或验证页面")
+                            if 'id="js_content"' not in text and "id='js_content'" not in text and any(
+                                    s in text.lower() for s in (
+                                        "site unavailable", "antispider", "访问过于频繁", "环境异常",
+                                        "访问受限", "完成验证", "验证码", "verifycaptcha")):
+                                self.block(url, "响应为访问限制或验证页面")
                         logger.info("GET host=%s status=%s bytes=%s", host, response.status_code, len(body))
                         return body, mime, url
                 except (httpx.TransportError, httpx.TimeoutException) as exc:

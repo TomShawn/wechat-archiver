@@ -1,9 +1,13 @@
-import json, re, shutil, uuid
+import json
+import re
+import shutil
 from pathlib import Path
 from urllib.parse import quote
-from .storage import atomic_write, write_json, digest, link_or_copy
-from .urls import article_id
+
 from .models import now
+from .storage import atomic_write, digest, link_or_copy, write_json
+from .urls import article_id
+
 
 def export_batch(archiver, inputs, destination, summary):
     destination=Path(destination).resolve()

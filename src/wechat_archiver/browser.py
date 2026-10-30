@@ -25,7 +25,8 @@ class BrowserFetcher:
         if not shutil.which("agent-browser"):
             raise ArchiveError("请先安装 agent-browser 及其浏览器运行时")
         try:
-            result = subprocess.run(["agent-browser", "--session", self.session, *args],
+            # 返回码由下方自行判断并转换为可读错误，不让 subprocess 抛出 CalledProcessError。
+            result = subprocess.run(["agent-browser", "--session", self.session, *args], check=False,
                                     capture_output=True, text=True, timeout=self.config.timeout + 15)
         except subprocess.TimeoutExpired as exc:
             # TimeoutExpired 不是 OSError，不转换会中断整个批次。
@@ -78,7 +79,8 @@ class BrowserFetcher:
 
     def close(self):
         if self.started:
+            # 关闭会话失败不影响已完成的归档，只记录日志。
             try:
                 self.command("close")
-            except Exception:
-                pass
+            except (ArchiveError, OSError) as exc:
+                logger.warning("browser close failed session=%s reason=%s", self.session, exc)

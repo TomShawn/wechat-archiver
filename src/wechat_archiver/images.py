@@ -43,6 +43,19 @@ def local_resource(source: str, root: Path) -> Path:
     return candidate
 
 
+# 图片外层的行内格式标签；OCR 引用块必须插在它们之外，否则加粗等标记会粘在代码块围栏上。
+INLINE_TAGS = {"a", "b", "strong", "i", "em", "u", "s", "del", "span", "font", "sup", "sub", "mark", "small", "big"}
+
+
+def ocr_anchor(node, notes):
+    """返回 OCR 引用块应插入其后的节点：跳出行内格式标签，并排在此前插入的引用块之后以保持图片顺序。"""
+    while node.parent is not None and node.parent.name in INLINE_TAGS:
+        node = node.parent
+    while node.next_sibling is not None and id(node.next_sibling) in notes:
+        node = node.next_sibling
+    return node
+
+
 def image_source(node) -> str:
     return node.get("data-src") or node.get("data-original") or node.get("src") or ""
 
@@ -85,7 +98,7 @@ def process_images(html: str, dest: Path, fetcher, *, base_url: str | None = Non
 
 def _process_nodes(soup, nodes, downloads, dest, fetcher, *, base_url, local_root, offline, ocr_engine,
                    cached_images, checkpoint_callback, checkpoint_interval):
-    by_source, by_content, records = {}, {}, []
+    by_source, by_content, records, notes = {}, {}, [], set()
     # 只为新下载或新 OCR 的结果写检查点，且限制写入频率；调用方在结束时写最终清单。
     unsaved, last_checkpoint = False, time.monotonic()
     for number, node in enumerate(nodes, 1):
@@ -165,7 +178,8 @@ def _process_nodes(soup, nodes, downloads, dest, fetcher, *, base_url, local_roo
                 code.string = result["text"]
                 pre.append(code)
                 note.append(pre)
-                node.insert_after(note)
+                ocr_anchor(node, notes).insert_after(note)
+                notes.add(id(note))
         else:
             # 不保留失效远程图片链接冒充本地归档，位置与失败原因仍保留在文章中。
             note = soup.new_tag("p")

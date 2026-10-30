@@ -69,8 +69,10 @@ def convert_html(html: str, base_url: str | None = None) -> str:
         elif base_url:
             link["href"] = urljoin(base_url, href)
     # markdownify 默认会忽略标题和表格中的图片，显式保留所有位置。
-    return Converter(heading_style="ATX", bullets="-", escape_misc=True, keep_inline_images_in=["td", "th", "a", "p",
-                     "h1", "h2", "h3", "h4", "h5", "h6"]).convert(str(soup)).strip() + "\n"
+    # 微信表格不用 th，按首行推断表头，避免生成空表头行把真实表头挤进数据行。
+    return Converter(heading_style="ATX", bullets="-", escape_misc=True, table_infer_header=True,
+                     keep_inline_images_in=["td", "th", "a", "p", "h1", "h2", "h3", "h4", "h5", "h6"]
+                     ).convert(str(soup)).strip() + "\n"
 
 
 def render_document(metadata: dict, body: str) -> str:

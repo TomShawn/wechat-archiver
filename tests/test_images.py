@@ -112,3 +112,22 @@ def test_no_checkpoint_when_nothing_new(config, tmp_path):
                    cached_images={"https://mmbiz.qpic.cn/0.png": {"file": cached}},
                    checkpoint_callback=lambda records: seen.append(len(records)), checkpoint_interval=0)
     assert seen == []
+
+
+class FakeOCR:
+    def recognize(self, path):
+        return {"status": "ok", "text": f"文字{path.name[:4]}\n第二行", "low_confidence": False}
+
+
+def test_ocr_block_placed_outside_inline_formatting(config, tmp_path):
+    from wechat_archiver.markdown import convert_html
+    html = ('<p><strong><span><img data-src="https://mmbiz.qpic.cn/0.png">'
+            '<img data-src="https://mmbiz.qpic.cn/1.png"></span></strong>后文</p>')
+    out, records = process_images(html, tmp_path / "assets", SlowFetcher(config), ocr_engine=FakeOCR())
+    body = convert_html(out)
+    assert "```**" not in body and "**```" not in body
+    fences = [line for line in body.splitlines() if line.lstrip("> ").startswith("```")]
+    assert all(line.strip("> ") == "```" for line in fences) and len(fences) == 4
+    # 两张图的 OCR 块保持图片顺序。
+    first, second = (record["path"].split("/")[1][:4] for record in records)
+    assert body.index("文字" + first) < body.index("文字" + second)

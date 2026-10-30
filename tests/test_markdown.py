@@ -36,3 +36,9 @@ def test_data_table_kept_as_markdown_table():
 
 def test_empty_layout_table_dropped():
     assert convert_html("<p>前</p><table><tbody><tr></tr></tbody></table><p>后</p>").count("|") == 0
+
+
+def test_table_without_th_uses_first_row_as_header():
+    body = convert_html("<table><tbody><tr><td>分段</td><td>里程</td></tr><tr><td>大觉寺</td><td>5km</td></tr></tbody></table>")
+    lines = body.strip().splitlines()
+    assert lines[0] == "| 分段 | 里程 |" and lines[1] == "| --- | --- |" and lines[2] == "| 大觉寺 | 5km |"

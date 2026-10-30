@@ -6,6 +6,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from bs4 import BeautifulSoup
@@ -73,6 +74,14 @@ def article_identity(article, raw: bytes) -> str:
     material = json.dumps([article.title, article.account, article.published_at,
                            BeautifulSoup(article.html, "lxml").get_text()], ensure_ascii=False)
     return digest(material.encode())
+
+
+def final_wechat_url(url: str) -> str:
+    """没有记录最终地址的旧缓存：微信文章的 http 请求总会跳转到 https 的同一地址，按此还原。"""
+    parts = urlsplit(url)
+    if parts.scheme == "http" and parts.hostname == "mp.weixin.qq.com":
+        return urlunsplit(("https", *parts[1:]))
+    return url
 
 
 def cached_image_index(checkpoint: Path, manifest: Path, previous: dict | None) -> dict:
@@ -366,14 +375,19 @@ class Archiver:
     def _load_page(self, cache, url, refetch):
         """读取已缓存的文章页面；没有缓存或要求 --refetch 时重新抓取，确认是文章页后才写入缓存。"""
         # --force 复用已抓取的页面，只有 --refetch 才重新请求微信。
+        url_file = cache.with_suffix(".url")
         if cache.exists() and not refetch:
-            return cache.read_bytes(), "text/html", url
+            # 缓存页面的地址取抓取时跳转后的最终地址，保证重处理前后 source_url 一致。
+            if url_file.is_file():
+                return cache.read_bytes(), "text/html", url_file.read_text("utf-8").strip()
+            return cache.read_bytes(), "text/html", final_wechat_url(url)
         raw, mime, final_url = (self.browser or self.fetcher).get(url, article=True)
         try:
             parse_article(raw, final_url)
         except SharedArticle:
             pass
         atomic_write(cache, raw)
+        atomic_write(url_file, final_url)
         return raw, mime, final_url
 
     def _import_markdown(self, raw, path, source_url):

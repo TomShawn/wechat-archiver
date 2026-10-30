@@ -156,3 +156,39 @@ def test_expired_share_original_is_unavailable(config):
     fetcher = FakeFetcher(config, {URL: SHARE, ORIGINAL: EXPIRED})
     _, rows = archive(config, fetcher, [URL])
     assert rows[URL]["status"] == "unavailable"
+
+
+class RedirectingFetcher(FakeFetcher):
+    """模拟浏览器：http 地址跳转为 https 并去掉片段。"""
+
+    def get(self, url, **kwargs):
+        raw, mime, _ = super().get(url, **kwargs)
+        return raw, mime, url.replace("http://", "https://", 1).split("#")[0]
+
+
+HTTP_URL = "http://mp.weixin.qq.com/s?__biz=MzA&mid=1&idx=1&sn=a"
+
+
+def test_source_url_stays_final_after_force(config):
+    fetcher = RedirectingFetcher(config, {HTTP_URL: page()})
+    _, first = archive(config, fetcher, [HTTP_URL])
+    _, again = archive(config, fetcher, [HTTP_URL], force=True)
+    assert first[HTTP_URL]["source_url"] == again[HTTP_URL]["source_url"] == HTTP_URL.replace("http:", "https:")
+    assert "source_url: https://" in body_of(again[HTTP_URL])
+    assert fetcher.calls == [HTTP_URL]
+
+
+def test_legacy_cache_without_url_file_uses_https(config):
+    from wechat_archiver.urls import article_id
+    fetcher = RedirectingFetcher(config, {HTTP_URL: page()})
+    archive(config, fetcher, [HTTP_URL])
+    (config.path("database").parent / "checkpoints" / article_id(HTTP_URL) / "source.url").unlink()
+    _, rows = archive(config, fetcher, [HTTP_URL], force=True)
+    assert rows[HTTP_URL]["source_url"] == HTTP_URL.replace("http:", "https:")
+
+
+def test_final_wechat_url_only_upgrades_wechat():
+    from wechat_archiver.archive import final_wechat_url
+    assert final_wechat_url("http://mp.weixin.qq.com/s/abc") == "https://mp.weixin.qq.com/s/abc"
+    assert final_wechat_url("https://mp.weixin.qq.com/s/abc") == "https://mp.weixin.qq.com/s/abc"
+    assert final_wechat_url("http://example.com/a") == "http://example.com/a"

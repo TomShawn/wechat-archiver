@@ -51,6 +51,12 @@ class Converter(MarkdownConverter):
             return ""
         if el.find(attrs={"rowspan": True}) or el.find(attrs={"colspan": True}):
             return "\n\n<!-- 复杂表格：保留原始 HTML，请人工检查 -->\n" + str(el) + "\n\n"
+        # 微信常用每行只有一个单元格的表格做版面排版。按数据表转换会把图片降级为 alt 文字、
+        # 把 OCR 和视频压成一行，因此逐个单元格按普通正文块转换。
+        cells = [row.find_all(["td", "th"], recursive=False) for row in el.find_all("tr")]
+        if all(len(row) <= 1 for row in cells):
+            blocks = [type(self)(**self.options).convert(row[0].decode_contents()).strip() for row in cells if row]
+            return "\n\n" + "\n\n".join(block for block in blocks if block) + "\n\n"
         return super().convert_table(el, text, parent_tags)
 
 

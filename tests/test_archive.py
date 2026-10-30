@@ -160,3 +160,58 @@ def test_batch_export_hardlinks_images(config, tmp_path):
     [image] = key_dir.iterdir()
     assert image.stat().st_nlink >= 3
     assert f"assets/{key_dir.name}/{image.name}" in next((tmp_path / "batch").glob("*.md")).read_text("utf-8")
+
+
+LAYOUT_PAGE = """<html><body><h1 id="activity-name">排版表格</h1><a id="js_name">号</a>
+<em id="publish_time">2026-10-01</em>
+<div id="js_content"><p>这是一段用于测试排版表格的正文。</p>
+<table><tbody><tr><td><section><img src="img/a.png" alt="图片"></section></td></tr></tbody></table>
+</div></body></html>"""
+
+
+def test_images_in_layout_table_are_kept(config, tmp_path):
+    page = write_page(tmp_path / "src")
+    page.write_text(LAYOUT_PAGE, "utf-8")
+    summary = run(config, {"path": str(page)})
+    assert summary.succeeded == 1, summary.errors
+    [image] = (delivered(config) / "assets").iterdir()
+    assert f"](assets/{image.name})" in (delivered(config) / "index.md").read_text("utf-8")
+
+
+def test_unreferenced_saved_image_marks_partial(config, tmp_path, monkeypatch):
+    import wechat_archiver.archive as archive_module
+    original = archive_module.convert_html
+    monkeypatch.setattr(archive_module, "convert_html",
+                        lambda html, base_url=None: original(html, base_url).split("![")[0] + "\n")
+    page = write_page(tmp_path / "src")
+    summary = run(config, {"path": str(page)})
+    assert summary.partial == 1
+    assert any(error["reason"] == "图片已保存但未出现在转换后的正文中" for error in summary.errors)
+    quality = __import__("json").loads((delivered(config) / "quality.json").read_text("utf-8"))
+    assert quality["checks"]["saved_images_referenced"] is False
+    assert any("未出现在正文中（位置 1）" in warning for warning in quality["warnings"])
+
+
+def test_batch_export_twice_to_same_directory(config, tmp_path):
+    from wechat_archiver.batch import export_batch
+    page = write_page(tmp_path / "src")
+    inputs = [{"kind": "html", "offline": True, "path": str(page)}]
+    archiver = Archiver(config)
+    try:
+        summary = archiver.run(inputs)
+        export_batch(archiver, inputs, tmp_path / "batch", summary)
+        summary = archiver.run(inputs, force=True)
+        export_batch(archiver, inputs, tmp_path / "batch", summary)
+    finally:
+        archiver.close()
+    [key_dir] = (tmp_path / "batch" / "assets").iterdir()
+    assert len(list(key_dir.iterdir())) == 1
+
+
+def test_link_or_copy_replaces_different_file(tmp_path):
+    from wechat_archiver.storage import link_or_copy
+    source, target = tmp_path / "a.png", tmp_path / "b.png"
+    source.write_bytes(b"new")
+    target.write_bytes(b"old")
+    link_or_copy(source, target)
+    assert target.read_bytes() == b"new" and target.samefile(source)

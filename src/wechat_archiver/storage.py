@@ -38,6 +38,12 @@ def write_json(path: Path, value):
 
 def link_or_copy(source, target):
     # 归档图片按内容命名且写入后不再修改，可安全共享同一份数据；跨文件系统时退回复制。
+    target = Path(target)
+    if target.exists():
+        # 重复导出到同一批次目录时，目标可能已是指向同一份数据的硬链接。
+        if os.path.samefile(source, target):
+            return
+        target.unlink()
     try:
         os.link(source, target)
     except OSError:

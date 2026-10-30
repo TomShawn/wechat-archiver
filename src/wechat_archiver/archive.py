@@ -175,7 +175,14 @@ class Archiver:
                     article.warnings.append(f"{len(low_ocr)} 个图片位置的 OCR 置信度不足，需对照原图核对")
                 if self.ocr_engine and getattr(self.ocr_engine, "unavailable_reason", None):
                     article.warnings.append(self.ocr_engine.unavailable_reason)
-                status = "partial" if failures or ocr_errors or content_issue else "success"
+                # 反向核对：已保存的图片都必须出现在正文中，否则转换时丢了图片位置。
+                references = set(markdown_images(body))
+                unreferenced = [record for record in images if record["path"] and record["path"] not in references]
+                if unreferenced:
+                    positions = "、".join(str(record["position"]) for record in unreferenced)
+                    article.warnings.append(f"{len(unreferenced)} 个已保存的图片未出现在正文中（位置 {positions}），"
+                                            "请对照原始文件检查")
+                status = "partial" if failures or ocr_errors or content_issue or unreferenced else "success"
                 verification = "body_verified" if kind == "url" else "local_import_unverified"
                 archived_at = now()
                 metadata = {"title": article.title, "author": article.author, "account": article.account,
@@ -189,7 +196,7 @@ class Archiver:
                 for record in images:
                     if record["path"] and not (staging / record["path"]).is_file():
                         raise ArchiveError(f"本地图片不存在：{record['path']}")
-                for reference in markdown_images(body):
+                for reference in references:
                     if not reference.startswith("assets/") or not (staging / reference).is_file():
                         raise ArchiveError(f"Markdown 图片引用无效：{reference}")
                 quality = {"article_id": key, "status": status, "verification_status": verification,
@@ -197,6 +204,7 @@ class Archiver:
                            "checks": {"title_present": True, "body_nonempty": True,
                                       **content_checks,
                                       "saved_images_exist": True, "markdown_images_resolve": True,
+                                      "saved_images_referenced": not unreferenced,
                                       "date_has_evidence": bool(article.date_evidence),
                                       "full_content_manually_verified": False},
                            "content_hash": digest(raw)}
@@ -224,6 +232,10 @@ class Archiver:
                 for record in ocr_errors:
                     summary.errors.append({"input": source_url or str(path), "image": record["position"],
                                            "reason": record["ocr"]["error"], "suggestion": "检查本地 Vision 安装，或 --no-ocr"})
+                for record in unreferenced:
+                    summary.errors.append({"input": source_url or str(path), "image": record["position"],
+                                           "reason": "图片已保存但未出现在转换后的正文中",
+                                           "suggestion": "对照 original.html 检查 index.md 中该图片位置"})
                 if content_issue:
                     summary.errors.append({"input": source_url or str(path), "reason": "正文或代码块对照检查失败",
                                            "suggestion": "对照 original.html / original.md 检查 index.md"})

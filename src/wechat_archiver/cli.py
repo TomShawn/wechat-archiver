@@ -149,6 +149,7 @@ def execute(args, config):
             print(json.dumps({"counts": counts, "articles": rows}, ensure_ascii=False, indent=2))
             return 0
         input_info = {}
+        rejected_inputs = []
         if args.command == "archive":
             if args.selected:
                 inputs = read_selected(args.selected)
@@ -159,6 +160,7 @@ def execute(args, config):
                 inputs = [{"kind": "url", "url": url} for url in batch.urls]
                 input_info = {"input_url_occurrences": batch.occurrences,
                               "input_duplicates_removed": batch.duplicates}
+                rejected_inputs = batch.rejected
             else:
                 inputs = [{"kind": "url", "url": url} for url in args.url]
         elif args.command == "import":
@@ -173,6 +175,10 @@ def execute(args, config):
             raise ArchiveError("未知命令")
         summary = archiver.run(inputs, force=args.force or args.command == "retry",
                                refetch=getattr(args, "refetch", False))
+        # 被截断的链接没有发出请求，同样计为失败，避免整批看起来全部成功。
+        summary.failed += len(rejected_inputs)
+        summary.errors.extend({"input": item["url"], "line": item["line"], "reason": item["reason"],
+                               "suggestion": "从微信重新复制完整链接后再归档"} for item in rejected_inputs)
         from .batch import export_batch
         destination = resolve_batch_destination(config, args.output_dir)
         batch_directory = export_batch(archiver, inputs, destination, summary)

@@ -101,3 +101,58 @@ def test_different_articles_are_not_duplicates(config):
     fetcher = FakeFetcher(config, {URL: page("甲文章正文。"), other: page("乙文章正文。")})
     summary, _ = archive(config, fetcher, [URL, other])
     assert summary.succeeded == 2
+
+
+ORIGINAL = "https://mp.weixin.qq.com/s?__biz=MzkxNA%3D%3D&mid=1&idx=1&sn=x"
+SHARE = f"""<html><body><h1 id="activity-name">转发</h1><div id="js_share_content">
+<div id="js_content"><p>[图片]摘要prepar...</p></div>
+<span id="js_share_source" data-url="{ORIGINAL.replace('&', '&amp;')}#wechat_redirect">阅读全文</span>
+</div></body></html>"""
+EXPIRED = "<html><body><div class='weui-msg'>链接已过期</div></body></html>"
+
+
+def test_share_card_archives_original(config):
+    fetcher = FakeFetcher(config, {URL: SHARE, ORIGINAL: page("原文完整正文。")})
+    summary, rows = archive(config, fetcher, [URL])
+    assert summary.succeeded == 1
+    assert fetcher.calls == [URL, ORIGINAL]
+    row = rows[URL]
+    assert row["source_url"] == ORIGINAL
+    document = body_of(row)
+    assert "原文完整正文" in document and "摘要prepar" not in document
+    assert "分享卡片" in document
+
+
+def test_share_card_reprocess_uses_both_caches(config):
+    fetcher = FakeFetcher(config, {URL: SHARE, ORIGINAL: page("原文完整正文。")})
+    archive(config, fetcher, [URL])
+    summary, rows = archive(config, fetcher, [URL], force=True)
+    assert summary.succeeded == 1 and fetcher.calls == [URL, ORIGINAL]
+    assert "分享卡片" in body_of(rows[URL])
+
+
+def test_share_card_and_original_are_duplicates(config):
+    fetcher = FakeFetcher(config, {URL: SHARE, ORIGINAL: page("原文完整正文。")})
+    summary, rows = archive(config, fetcher, [ORIGINAL, URL])
+    assert (summary.succeeded, summary.skipped) == (1, 1)
+    assert rows[URL]["status"] == "duplicate"
+
+
+def test_expired_link_is_unavailable_and_not_retried(config):
+    from wechat_archiver.database import Database
+    fetcher = FakeFetcher(config, {URL: EXPIRED})
+    summary, rows = archive(config, fetcher, [URL])
+    assert summary.failed == 1
+    assert rows[URL]["status"] == "unavailable"
+    assert "__biz" in summary.errors[0]["suggestion"]
+    database = Database(config.path("database"))
+    try:
+        assert database.rows(failed_only=True) == []
+    finally:
+        database.close()
+
+
+def test_expired_share_original_is_unavailable(config):
+    fetcher = FakeFetcher(config, {URL: SHARE, ORIGINAL: EXPIRED})
+    _, rows = archive(config, fetcher, [URL])
+    assert rows[URL]["status"] == "unavailable"

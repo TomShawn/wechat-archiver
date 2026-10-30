@@ -10,14 +10,12 @@ LATIN_LANGUAGES = ("en-US",)
 CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 # 两次识别的行框重叠比例达到此值，视为同一行。
 SAME_LINE_OVERLAP = 0.5
-# 超过此比例的行低于阈值时，即使中位数达标也提示人工核对。
-LOW_CONFIDENCE_LINE_RATIO = 0.2
 
 
 class VisionOCR:
     """同步 Apple Vision 识别，不调用网络，不使用语言模型纠错。"""
 
-    def __init__(self, min_confidence=0.65):
+    def __init__(self, min_confidence=0.4):
         self.min_confidence = min_confidence
         self.unavailable_reason = None
         try:
@@ -110,14 +108,18 @@ def merge_latin_lines(cjk_lines: list[dict], latin_lines: list[dict]) -> list[di
 
 
 def summarize_confidence(lines: list[dict], threshold: float) -> dict:
-    """以中位数代表整图置信度，个别低分行单独计数，避免一行误识别拖低整张图。"""
+    """以中位数代表整图置信度，个别低分行单独计数，避免一行误识别拖低整张图。
+
+    Vision 对中文只给出 0.3、0.5、1.0 几档：0.5 的行基本正确，0.3 多为图标、界面元素或水印，
+    因此以中位数低于阈值（过半行为 0.3 档）作为整图需要核对的信号。
+    """
     if not lines:
         return {"confidence": 1.0, "min_confidence": 1.0, "low_confidence_lines": 0, "low_confidence": False}
     scores = [line["confidence"] for line in lines]
     median = statistics.median(scores)
     low_lines = sum(score < threshold for score in scores)
     return {"confidence": median, "min_confidence": min(scores), "low_confidence_lines": low_lines,
-            "low_confidence": median < threshold or low_lines / len(scores) > LOW_CONFIDENCE_LINE_RATIO}
+            "low_confidence": median < threshold}
 
 
 def layout_lines(lines: list[dict]) -> str:

@@ -5,7 +5,8 @@ import subprocess
 import time
 import uuid
 
-from .models import AccessBlocked, ArchiveError
+from .models import AccessBlocked, ArchiveError, UnavailableArticle
+from .parser import unavailable_article
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class BrowserFetcher:
         for attempt in range(self.config.retries + 1):
             try:
                 return self.load(url)
-            except AccessBlocked:
+            except (AccessBlocked, UnavailableArticle):
                 raise
             except ArchiveError as exc:
                 if attempt == self.config.retries:
@@ -64,6 +65,8 @@ class BrowserFetcher:
                     marker in data["text"] for marker in ("验证码", "环境异常", "访问受限", "操作频繁"))):
                 self.blocked = True
                 raise AccessBlocked("浏览器出现验证或访问限制，请人工处理后重新运行")
+            if not data["ready"] and (error := unavailable_article(data["text"])):
+                raise error
             if data["ready"]:
                 raw = data["html"].encode()
                 if len(raw) > self.config.max_html_bytes:

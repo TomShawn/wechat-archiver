@@ -25,7 +25,7 @@ class Config:
     max_html_bytes: int = 15 * 1024 * 1024
     max_image_bytes: int = 20 * 1024 * 1024
     ocr: bool = True
-    ocr_min_confidence: float = 0.65
+    ocr_min_confidence: float = 0.4
     search_cache_hours: float = 24
 
     def path(self, key: str) -> Path:

@@ -29,18 +29,18 @@ def scored(*scores):
 
 
 def test_single_bad_line_does_not_flag_image():
-    result = summarize_confidence(scored(*[0.95] * 9, 0.3), 0.65)
-    assert result["confidence"] == 0.95 and result["min_confidence"] == 0.3
+    result = summarize_confidence(scored(*[1.0] * 9, 0.3), 0.4)
+    assert result["confidence"] == 1.0 and result["min_confidence"] == 0.3
     assert result["low_confidence_lines"] == 1 and not result["low_confidence"]
 
 
-def test_many_bad_lines_flag_image():
-    result = summarize_confidence(scored(0.95, 0.95, 0.95, 0.5, 0.5), 0.65)
-    assert result["confidence"] == 0.95 and result["low_confidence"]
+def test_vision_mid_level_is_not_low():
+    # Vision 中文常见的 0.5 档基本识别正确，不应整图标记。
+    assert not summarize_confidence(scored(0.5, 0.5, 0.3, 1.0, 0.3), 0.4)["low_confidence"]
 
 
-def test_low_median_flags_image():
-    assert summarize_confidence(scored(0.4, 0.5, 0.9), 0.65)["low_confidence"]
+def test_mostly_lowest_level_flags_image():
+    assert summarize_confidence(scored(0.3, 0.3, 0.3, 0.5, 1.0), 0.4)["low_confidence"]
 
 
 def test_no_lines_is_confident():

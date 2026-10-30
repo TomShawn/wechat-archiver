@@ -12,7 +12,7 @@ from .database import Database
 from .fetcher import Fetcher
 from .images import markdown_images, process_images
 from .markdown import convert_html, render_document
-from .models import ArchiveError, Summary, now
+from .models import ArchiveError, SharedArticle, Summary, UnavailableArticle, now
 from .parser import parse_article
 from .quality import archive_is_intact, check_content
 from .storage import (atomic_write, archive_lock, commit_directory, digest, directory_name, link_or_copy,
@@ -69,17 +69,17 @@ class Archiver:
                 input_json = json.dumps(spec, ensure_ascii=False)
                 self.database.save(key, {"source_url": source_url, "status": "running", "error": None,
                                          "input_json": input_json})
+                shared_from = None
                 if kind == "url":
                     checkpoint = self.config.path("database").parent / "checkpoints" / key
-                    checkpoint.mkdir(parents=True, exist_ok=True)
-                    cached_html = checkpoint / "source.html"
-                    # --force 复用已抓取的页面，只有 --refetch 才重新请求微信。
-                    if cached_html.exists() and not refetch:
-                        raw, mime = cached_html.read_bytes(), "text/html"
-                    else:
-                        raw, mime, source_url = (self.browser or self.fetcher).get(source_url, article=True)
+                    raw, mime, source_url = self._load_page(checkpoint / "source.html", source_url, refetch)
+                    try:
                         parse_article(raw, source_url)
-                        atomic_write(cached_html, raw)
+                    except SharedArticle as shared:
+                        # 分享卡片只有摘要：改为归档原文，原文页面单独缓存，保留卡片以便重处理时识别。
+                        shared_from = source_url
+                        raw, mime, source_url = self._load_page(
+                            checkpoint / "shared-original.html", shared.original_url, refetch)
                     if mime and mime not in ("text/html", "application/xhtml+xml"):
                         raise ArchiveError(f"文章响应类型不正确：{mime}")
                 else:
@@ -91,6 +91,8 @@ class Archiver:
                     source_url = article.source_url
                 else:
                     article = parse_article(raw, source_url, local=kind != "url", title_override=spec.get("title"))
+                if shared_from:
+                    article.warnings.append(f"输入链接是转发的分享卡片，已改为归档原文；分享链接：{shared_from}")
                 for name in ("title", "account", "author", "published_at"):
                     if spec.get(name):
                         setattr(article, name, spec[name])
@@ -121,7 +123,8 @@ class Archiver:
                 self.database.claim_identity(identity, key, alias)
                 checkpoint = self.config.path("database").parent / "checkpoints" / key
                 checkpoint.mkdir(parents=True, exist_ok=True)
-                atomic_write(checkpoint / ("source.md" if kind == "markdown" else "source.html"), raw)
+                if kind != "url":
+                    atomic_write(checkpoint / ("source.md" if kind == "markdown" else "source.html"), raw)
                 out = self.config.path("output_dir")
                 out.mkdir(parents=True, exist_ok=True)
                 staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=out))
@@ -228,9 +231,12 @@ class Archiver:
             except (ArchiveError, OSError, ValueError, yaml.YAMLError, sqlite3.Error) as exc:
                 summary.failed += 1
                 summary.errors.append({"input": spec.get("url") or spec.get("path"), "reason": str(exc),
-                                       "suggestion": "在浏览器检查文章并保存 HTML 与资源文件夹，再使用 import --html"})
+                                       "suggestion": getattr(exc, "suggestion", None)
+                                       or "在浏览器检查文章并保存 HTML 与资源文件夹，再使用 import --html"})
                 if key:
-                    values = {"status": "failed", "error": str(exc), "input_json": json.dumps(spec, ensure_ascii=False)}
+                    # 不可访问的文章记为 unavailable，retry --failed 不再反复请求。
+                    values = {"status": "unavailable" if isinstance(exc, UnavailableArticle) else "failed",
+                              "error": str(exc), "input_json": json.dumps(spec, ensure_ascii=False)}
                     # 已有可用交付的记录（成功、重复引用或部分完成）不因重处理失败降级为 failed。
                     if previous and previous["status"] in ("success", "duplicate", "partial") \
                             and previous.get("local_path"):
@@ -247,6 +253,19 @@ class Archiver:
                 if staging:
                     remove_staging(staging)
         return summary
+
+    def _load_page(self, cache, url, refetch):
+        """读取已缓存的文章页面；没有缓存或要求 --refetch 时重新抓取，确认是文章页后才写入缓存。"""
+        # --force 复用已抓取的页面，只有 --refetch 才重新请求微信。
+        if cache.exists() and not refetch:
+            return cache.read_bytes(), "text/html", url
+        raw, mime, final_url = (self.browser or self.fetcher).get(url, article=True)
+        try:
+            parse_article(raw, final_url)
+        except SharedArticle:
+            pass
+        atomic_write(cache, raw)
+        return raw, mime, final_url
 
     def _import_markdown(self, raw, path, source_url):
         import re

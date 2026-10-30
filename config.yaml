@@ -16,5 +16,6 @@ retries: 1
 max_html_bytes: 15728640
 max_image_bytes: 20971520
 ocr: true
-ocr_min_confidence: 0.65
+# Vision 对中文的行置信度只有 0.3、0.5、1.0 几档；0.4 表示过半行落在 0.3 档时提示核对。
+ocr_min_confidence: 0.4
 search_cache_hours: 24

@@ -5,7 +5,7 @@ import pytest
 
 from wechat_archiver import browser
 from wechat_archiver.browser import BrowserFetcher
-from wechat_archiver.models import AccessBlocked, ArchiveError
+from wechat_archiver.models import AccessBlocked, ArchiveError, UnavailableArticle
 
 URL = "https://mp.weixin.qq.com/s/abc"
 
@@ -72,3 +72,14 @@ def test_captcha_is_not_retried_and_blocks_batch(scripted):
     with pytest.raises(AccessBlocked):
         fetcher.get(URL)
     assert calls == ["open", "eval"]
+
+
+def test_expired_link_fails_immediately_without_retry(scripted):
+    fetcher, steps, calls = scripted
+    steps += ["", page(ready=False, text="链接已过期")]
+    with pytest.raises(UnavailableArticle):
+        fetcher.get(URL)
+    assert calls == ["open", "eval"]
+    # 文章不可访问不影响同批其他文章。
+    steps += ["", page()]
+    assert fetcher.get(URL)[0]

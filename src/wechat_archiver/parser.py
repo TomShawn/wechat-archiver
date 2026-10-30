@@ -5,7 +5,25 @@ from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
 
-from .models import ArchiveError, Article
+from .models import ArchiveError, Article, SharedArticle, UnavailableArticle
+from .urls import validate_url
+
+# 微信对不可访问文章返回的提示；出现在缺少正文的页面中时，视为永久失败。
+UNAVAILABLE_MARKERS = {
+    "链接已过期": "搜狗等搜索结果中的临时链接（src=11&signature=…）会过期；请在微信中打开文章，复制带 __biz 的永久链接",
+    "该内容已被发布者删除": "文章已被作者删除，无法归档",
+    "此内容因违规无法查看": "文章因违规被屏蔽，无法归档",
+    "此内容被多人投诉": "文章因投诉被屏蔽，无法归档",
+    "该公众号已迁移": "公众号已迁移，请在新公众号中找到文章的永久链接",
+    "系统出错": "链接可能不完整或参数有误（例如复制时混入空格），请检查后重新复制",
+}
+
+
+def unavailable_article(text: str) -> UnavailableArticle | None:
+    for marker, suggestion in UNAVAILABLE_MARKERS.items():
+        if marker in text:
+            return UnavailableArticle(f"微信返回“{marker}”，文章不可访问", suggestion)
+    return None
 
 
 def parse_date(value: str | None) -> str | None:
@@ -26,6 +44,14 @@ def parse_article(raw: bytes | str, source_url: str | None = None, *, local=Fals
     root = soup.select_one("#js_content")
     if root is None and local:
         root = soup.select_one("article, main")
+    if root is None and (error := unavailable_article(soup.get_text(" ", strip=True))):
+        raise error
+    if root is not None and root.find_parent(id="js_share_content"):
+        source = soup.select_one("#js_share_source")
+        original = source and (source.get("data-url") or source.get("href"))
+        if not original:
+            raise ArchiveError("这是转发的分享卡片，只含摘要，且页面中没有原文链接")
+        raise SharedArticle(validate_url(original, article=True))
     if root is None:
         raise ArchiveError("未找到文章正文容器；可能是登录页、删除页或验证页，请手动保存真实文章 HTML 后导入")
 
